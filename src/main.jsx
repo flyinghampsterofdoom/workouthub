@@ -43,29 +43,6 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-const AUTH_STORAGE_KEY = "workout-tool:auth-user";
-const USERS_STORAGE_KEY = "workout-tool:users";
-const ADMIN_PASSWORD_OVERRIDE_KEY = "workout-tool:admin-password-hash";
-const ADMIN_USER = {
-  username: "admin",
-  displayName: "Admin",
-  role: "admin",
-};
-const ADMIN_PASSWORD_HASH =
-  "73287129c9a63fa9246d2e4c95f64bbddf0df63a6d2047a4543789a35012bf17";
-
-const STORAGE_KEYS = {
-  sessionPlans: "workout-tool:session-plans",
-  activeWorkout: "workout-tool:active-workout",
-  workoutLogs: "workout-tool:workout-logs",
-};
-
-const LEGACY_KEYS = {
-  exercises: "workout-tool:exercises",
-  activeSession: "workout-tool:active-session",
-  sessions: "workout-tool:sessions",
-};
-
 const DEFAULT_SESSION_PLANS = [
   {
     id: "plan-chest-arms",
@@ -174,119 +151,45 @@ const emptyExercise = {
   notes: "",
 };
 
-function resolveFallback(fallback) {
-  return typeof fallback === "function" ? fallback() : fallback;
+function readCookie(name) {
+  return document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${name}=`))
+    ?.split("=")
+    .slice(1)
+    .join("=");
 }
 
-function readStoredValue(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : resolveFallback(fallback);
-  } catch {
-    return resolveFallback(fallback);
+async function apiRequest(path, options = {}) {
+  const hasBody = Object.prototype.hasOwnProperty.call(options, "body");
+  const method = options.method || "GET";
+  const headers = hasBody ? { "Content-Type": "application/json" } : {};
+  const csrfToken = method !== "GET" ? readCookie("workouthub_csrf") : null;
+
+  if (csrfToken) {
+    headers["X-CSRF-Token"] = decodeURIComponent(csrfToken);
   }
-}
 
-function useStoredState(key, fallback) {
-  const [value, setValue] = useState(() => readStoredValue(key, fallback));
+  const response = await fetch(path, {
+    method,
+    credentials: "include",
+    headers,
+    body: hasBody ? JSON.stringify(options.body) : undefined,
+  });
 
-  useEffect(() => {
-    localStorage.setItem(key, JSON.stringify(value));
-  }, [key, value]);
+  if (response.status === 204) return null;
 
-  return [value, setValue];
-}
+  const data = await response.json().catch(() => ({}));
 
-function userStorageKey(username, key) {
-  return `${key}:user:${username}`;
+  if (!response.ok) {
+    throw new Error(data.error || "Request failed.");
+  }
+
+  return data;
 }
 
 function normalizeUsername(value) {
   return value.trim().toLowerCase();
-}
-
-async function sha256Hex(value) {
-  const encoded = new TextEncoder().encode(value);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function getStoredUserAccounts() {
-  const users = readStoredValue(USERS_STORAGE_KEY, []);
-
-  if (!Array.isArray(users)) return [];
-
-  return users
-    .filter((user) => user?.username && user?.passwordHash)
-    .map((user) => ({
-      username: normalizeUsername(user.username),
-      displayName: user.displayName || user.username,
-      role: user.role || "user",
-      passwordHash: user.passwordHash,
-      createdAt: user.createdAt || new Date().toISOString(),
-    }))
-    .filter((user) => user.username !== ADMIN_USER.username);
-}
-
-function saveStoredUserAccounts(users) {
-  localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-}
-
-function getUserAccounts() {
-  const adminPasswordHash =
-    readStoredValue(ADMIN_PASSWORD_OVERRIDE_KEY, null) || ADMIN_PASSWORD_HASH;
-
-  return [
-    {
-      ...ADMIN_USER,
-      passwordHash: adminPasswordHash,
-      createdAt: null,
-    },
-    ...getStoredUserAccounts(),
-  ];
-}
-
-function getPublicUser(account) {
-  return {
-    username: account.username,
-    displayName: account.displayName || account.username,
-    role: account.role || "user",
-  };
-}
-
-function findUserAccount(username) {
-  const normalizedUsername = normalizeUsername(username);
-  return getUserAccounts().find((account) => account.username === normalizedUsername) || null;
-}
-
-function setPasswordHashForUsername(username, passwordHash) {
-  const normalizedUsername = normalizeUsername(username);
-
-  if (normalizedUsername === ADMIN_USER.username) {
-    localStorage.setItem(ADMIN_PASSWORD_OVERRIDE_KEY, JSON.stringify(passwordHash));
-    return true;
-  }
-
-  const users = getStoredUserAccounts();
-  const nextUsers = users.map((user) =>
-    user.username === normalizedUsername ? { ...user, passwordHash } : user,
-  );
-  const didUpdate = nextUsers.some((user) => user.username === normalizedUsername);
-
-  if (!didUpdate) return false;
-
-  saveStoredUserAccounts(nextUsers);
-  return true;
-}
-
-async function authenticateUser(username, password) {
-  const account = findUserAccount(username);
-  if (!account) return null;
-
-  const passwordHash = await sha256Hex(password);
-  return passwordHash === account.passwordHash ? getPublicUser(account) : null;
 }
 
 function generateTemporaryPassword(length = 18) {
@@ -459,48 +362,6 @@ function normalizeExercise(exercise) {
     time: coerceNumber(exercise.time),
     notes: exercise.notes || "",
   };
-}
-
-function getInitialSessionPlans() {
-  const legacyExercises = readStoredValue(LEGACY_KEYS.exercises, null);
-
-  if (Array.isArray(legacyExercises) && legacyExercises.length) {
-    return [
-      {
-        id: "plan-migrated-library",
-        name: "Saved Exercise Library",
-        focus: "General",
-        schedule: "Unscheduled",
-        notes: "Created from the earlier exercise library.",
-        exercises: legacyExercises.map(normalizeExercise),
-      },
-      ...DEFAULT_SESSION_PLANS,
-    ];
-  }
-
-  return DEFAULT_SESSION_PLANS;
-}
-
-function migrateWorkoutLog(session) {
-  const migrated = {
-    ...session,
-    planId: session.planId || null,
-    planName: session.planName || "Custom Session",
-    title: session.title || `${todayTitle()} Workout`,
-    startedAt: session.startedAt || session.finishedAt || new Date().toISOString(),
-    finishedAt: session.finishedAt || session.startedAt || new Date().toISOString(),
-    entries: Array.isArray(session.entries) ? session.entries : [],
-  };
-
-  return {
-    ...migrated,
-    durationMs: getWorkoutDuration(migrated),
-  };
-}
-
-function getInitialWorkoutLogs() {
-  const legacySessions = readStoredValue(LEGACY_KEYS.sessions, []);
-  return Array.isArray(legacySessions) ? legacySessions.map(migrateWorkoutLog) : [];
 }
 
 function planExerciseToEntry(exercise) {
@@ -1639,15 +1500,18 @@ function LoginScreen({ onLogin }) {
     setIsChecking(true);
 
     try {
-      const authenticatedUser = await authenticateUser(username, password);
+      const { user } = await apiRequest("/api/auth/login", {
+        method: "POST",
+        body: {
+          username,
+          password,
+        },
+      });
 
-      if (authenticatedUser) {
-        onLogin(authenticatedUser);
-        setPassword("");
-        return;
-      }
-
-      setError("Username or password is incorrect.");
+      onLogin(user);
+      setPassword("");
+    } catch (error) {
+      setError(error.message);
     } finally {
       setIsChecking(false);
     }
@@ -1691,7 +1555,7 @@ function LoginScreen({ onLogin }) {
 }
 
 function AdminPanel() {
-  const [users, setUsers] = useState(() => getStoredUserAccounts());
+  const [users, setUsers] = useState([]);
   const [draft, setDraft] = useState({
     username: "",
     displayName: "",
@@ -1699,14 +1563,22 @@ function AdminPanel() {
   });
   const [error, setError] = useState("");
   const [adminNotice, setAdminNotice] = useState(null);
-  const visibleUsers = [
-    {
-      ...ADMIN_USER,
-      createdAt: null,
-      isBuiltIn: true,
-    },
-    ...users,
-  ];
+
+  useEffect(() => {
+    let isMounted = true;
+
+    apiRequest("/api/admin/users")
+      .then((data) => {
+        if (isMounted) setUsers(data.users || []);
+      })
+      .catch((error) => {
+        if (isMounted) setError(error.message);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -1725,7 +1597,7 @@ function AdminPanel() {
       return;
     }
 
-    if (username === ADMIN_USER.username || users.some((user) => user.username === username)) {
+    if (users.some((user) => user.username === username)) {
       setError("That username already exists.");
       return;
     }
@@ -1735,27 +1607,29 @@ function AdminPanel() {
       return;
     }
 
-    const nextUser = {
-      username,
-      displayName,
-      role: "user",
-      passwordHash: await sha256Hex(password),
-      createdAt: new Date().toISOString(),
-    };
-    const nextUsers = [...users, nextUser];
-
-    saveStoredUserAccounts(nextUsers);
-    setUsers(nextUsers);
-    setAdminNotice({
-      type: "Created",
-      username,
-      displayName,
-    });
-    setDraft({
-      username: "",
-      displayName: "",
-      password: generateTemporaryPassword(),
-    });
+    try {
+      const { user } = await apiRequest("/api/admin/users", {
+        method: "POST",
+        body: {
+          username,
+          displayName,
+          password,
+        },
+      });
+      setUsers((current) => [...current, user]);
+      setAdminNotice({
+        type: "Created",
+        username: user.username,
+        displayName: user.displayName,
+      });
+      setDraft({
+        username: "",
+        displayName: "",
+        password: generateTemporaryPassword(),
+      });
+    } catch (error) {
+      setError(error.message);
+    }
   }
 
   function regeneratePassword() {
@@ -1763,24 +1637,28 @@ function AdminPanel() {
   }
 
   async function resetPassword(username) {
-    const temporaryPassword = generateTemporaryPassword();
-    const passwordHash = await sha256Hex(temporaryPassword);
-    const didReset = setPasswordHashForUsername(username, passwordHash);
-    const nextUsers = getStoredUserAccounts();
-    const resetUser =
-      username === ADMIN_USER.username
-        ? ADMIN_USER
-        : nextUsers.find((user) => user.username === username);
-
-    if (!didReset) return;
-
-    setUsers(nextUsers);
-    setAdminNotice({
-      type: "Password reset",
-      username,
-      displayName: resetUser?.displayName || username,
-      password: temporaryPassword,
-    });
+    try {
+      const { user, temporaryPassword } = await apiRequest(
+        `/api/admin/users/${encodeURIComponent(username)}/reset-password`,
+        {
+          method: "POST",
+          body: {},
+        },
+      );
+      setUsers((current) =>
+        current.map((account) =>
+          account.username === user.username ? { ...account, ...user } : account,
+        ),
+      );
+      setAdminNotice({
+        type: "Password reset",
+        username: user.username,
+        displayName: user.displayName,
+        password: temporaryPassword,
+      });
+    } catch (error) {
+      setError(error.message);
+    }
   }
 
   return (
@@ -1847,7 +1725,7 @@ function AdminPanel() {
         </div>
 
         <div className="user-list">
-          {visibleUsers.map((account) => (
+          {users.map((account) => (
             <article className="user-card" key={account.username}>
               <div>
                 <strong>{account.displayName || account.username}</strong>
@@ -1855,7 +1733,7 @@ function AdminPanel() {
               </div>
               <div className="plan-meta">
                 <span>{account.role}</span>
-                <span>{account.isBuiltIn ? "Built in" : formatDateTime(account.createdAt)}</span>
+                <span>{formatDateTime(account.createdAt)}</span>
               </div>
               <button
                 className="button ghost"
@@ -1907,19 +1785,20 @@ function AccountPanel({ user }) {
     setIsSaving(true);
 
     try {
-      const passwordHash = await sha256Hex(newPassword);
-      const didUpdate = setPasswordHashForUsername(user.username, passwordHash);
-
-      if (!didUpdate) {
-        setError("Could not update the password for this account.");
-        return;
-      }
-
+      await apiRequest("/api/account/password", {
+        method: "POST",
+        body: {
+          newPassword,
+          confirmPassword,
+        },
+      });
       setForm({
         newPassword: "",
         confirmPassword: "",
       });
       setSuccess("Password updated.");
+    } catch (error) {
+      setError(error.message);
     } finally {
       setIsSaving(false);
     }
@@ -1965,43 +1844,75 @@ function AccountPanel({ user }) {
 
 function WorkoutApp({ user, onLogout }) {
   const [viewMode, setViewMode] = useState("planner");
-  const scopedSessionPlansKey = userStorageKey(user.username, STORAGE_KEYS.sessionPlans);
-  const scopedActiveWorkoutKey = userStorageKey(user.username, STORAGE_KEYS.activeWorkout);
-  const scopedWorkoutLogsKey = userStorageKey(user.username, STORAGE_KEYS.workoutLogs);
-  const [sessionPlans, setSessionPlans] = useStoredState(
-    scopedSessionPlansKey,
-    () => {
-      const existingPlans = readStoredValue(STORAGE_KEYS.sessionPlans, null);
-      return user.username === ADMIN_USER.username && Array.isArray(existingPlans)
-        ? existingPlans
-        : DEFAULT_SESSION_PLANS;
-    },
-  );
-  const [selectedPlanId, setSelectedPlanId] = useState(() => {
-    const firstPlan = readStoredValue(scopedSessionPlansKey, () => {
-      const existingPlans = readStoredValue(STORAGE_KEYS.sessionPlans, null);
-      return user.username === ADMIN_USER.username && Array.isArray(existingPlans)
-        ? existingPlans
-        : DEFAULT_SESSION_PLANS;
-    })[0];
-    return firstPlan?.id || null;
-  });
-  const [activeWorkout, setActiveWorkout] = useStoredState(
-    scopedActiveWorkoutKey,
-    () => {
-      const existingWorkout = readStoredValue(STORAGE_KEYS.activeWorkout, null);
-      return user.username === ADMIN_USER.username ? existingWorkout : null;
-    },
-  );
-  const [workoutLogs, setWorkoutLogs] = useStoredState(
-    scopedWorkoutLogsKey,
-    () => {
-      const existingLogs = readStoredValue(STORAGE_KEYS.workoutLogs, null);
-      return user.username === ADMIN_USER.username && Array.isArray(existingLogs)
-        ? existingLogs
-        : [];
-    },
-  );
+  const [sessionPlans, setSessionPlansState] = useState([]);
+  const [selectedPlanId, setSelectedPlanId] = useState(null);
+  const [activeWorkout, setActiveWorkoutState] = useState(null);
+  const [workoutLogs, setWorkoutLogsState] = useState([]);
+  const [isDataLoading, setIsDataLoading] = useState(true);
+  const [dataError, setDataError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    setIsDataLoading(true);
+    apiRequest("/api/data")
+      .then((data) => {
+        if (!isMounted) return;
+
+        const nextSessionPlans = Array.isArray(data.sessionPlans)
+          ? data.sessionPlans
+          : DEFAULT_SESSION_PLANS;
+
+        setSessionPlansState(nextSessionPlans);
+        setActiveWorkoutState(data.activeWorkout || null);
+        setWorkoutLogsState(Array.isArray(data.workoutLogs) ? data.workoutLogs : []);
+        setSelectedPlanId(nextSessionPlans[0]?.id || null);
+        setDataError("");
+      })
+      .catch((error) => {
+        if (isMounted) setDataError(error.message);
+      })
+      .finally(() => {
+        if (isMounted) setIsDataLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user.username]);
+
+  function persistField(path, body) {
+    apiRequest(path, {
+      method: "PUT",
+      body,
+    }).catch((error) => {
+      setDataError(error.message);
+    });
+  }
+
+  function setSessionPlans(update) {
+    setSessionPlansState((current) => {
+      const next = typeof update === "function" ? update(current) : update;
+      persistField("/api/data/session-plans", { sessionPlans: next });
+      return next;
+    });
+  }
+
+  function setActiveWorkout(update) {
+    setActiveWorkoutState((current) => {
+      const next = typeof update === "function" ? update(current) : update;
+      persistField("/api/data/active-workout", { activeWorkout: next });
+      return next;
+    });
+  }
+
+  function setWorkoutLogs(update) {
+    setWorkoutLogsState((current) => {
+      const next = typeof update === "function" ? update(current) : update;
+      persistField("/api/data/workout-logs", { workoutLogs: next });
+      return next;
+    });
+  }
 
   const selectedPlan = useMemo(
     () => sessionPlans.find((plan) => plan.id === selectedPlanId) || sessionPlans[0] || null,
@@ -2290,7 +2201,13 @@ function WorkoutApp({ user, onLogout }) {
         </div>
       </header>
 
-      {viewMode === "history" ? (
+      {dataError && <p className="login-error">{dataError}</p>}
+
+      {isDataLoading ? (
+        <section className="panel">
+          <EmptyState icon={Clock} title="Loading workout data" />
+        </section>
+      ) : viewMode === "history" ? (
         <WorkoutHistoryView logs={workoutLogs} onDelete={deleteWorkoutLog} />
       ) : viewMode === "account" ? (
         <AccountPanel user={user} />
@@ -2357,20 +2274,48 @@ function WorkoutApp({ user, onLogout }) {
 }
 
 function App() {
-  const [user, setUser] = useState(() => {
-    const storedUser = readStoredValue(AUTH_STORAGE_KEY, null);
-    const account = storedUser?.username ? findUserAccount(storedUser.username) : null;
-    return account ? getPublicUser(account) : null;
-  });
+  const [user, setUser] = useState(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    apiRequest("/api/auth/me")
+      .then((data) => {
+        if (isMounted) setUser(data.user);
+      })
+      .catch(() => {
+        if (isMounted) setUser(null);
+      })
+      .finally(() => {
+        if (isMounted) setIsAuthLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   function handleLogin(nextUser) {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
     setUser(nextUser);
   }
 
-  function handleLogout() {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
+  async function handleLogout() {
+    await apiRequest("/api/auth/logout", {
+      method: "POST",
+      body: {},
+    }).catch(() => null);
     setUser(null);
+  }
+
+  if (isAuthLoading) {
+    return (
+      <main className="login-shell">
+        <section className="login-panel">
+          <EmptyState icon={Clock} title="Checking session" />
+        </section>
+      </main>
+    );
   }
 
   if (!user) {
