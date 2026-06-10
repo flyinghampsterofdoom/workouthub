@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   DndContext,
@@ -150,6 +150,31 @@ const emptyExercise = {
   time: 0,
   notes: "",
 };
+
+const NUMERIC_EXERCISE_FIELDS = ["sets", "reps", "weight", "time"];
+
+const WORKOUT_CELEBRATIONS = [
+  "Work out down! GITSUM!",
+  "Session smashed. GITSUM!",
+  "That workout did not survive you.",
+  "Boom. Logged, locked, and lifted.",
+  "All sets conquered. GITSUM!",
+  "Finished strong. That is the good stuff.",
+  "Workout complete. Absolute workhorse mode.",
+  "You rang the bell. GITSUM!",
+  "Done and dusted. Nice hit.",
+  "Every set checked. Big energy.",
+  "That one is in the books. GITSUM!",
+  "You handled business today.",
+  "Workout crushed. Go hydrate like a champion.",
+  "Clean sweep. All exercises done.",
+  "Mission complete. GITSUM!",
+  "You showed up and shut it down.",
+  "That is a wrap. Strong work.",
+  "Full send completed.",
+  "All done. Future you says thanks.",
+  "Workout complete. Built different today.",
+];
 
 function readCookie(name) {
   return document.cookie
@@ -308,6 +333,11 @@ function coerceNumber(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function parseNumericInput(value) {
+  if (value === "") return "";
+  return coerceNumber(value);
+}
+
 function getSetCount(entry) {
   return Math.max(0, Math.trunc(coerceNumber(entry.planned?.sets ?? entry.sets)));
 }
@@ -323,6 +353,13 @@ function normalizeDoneSets(doneSets, setCount) {
 
 function countDoneSets(entry) {
   return normalizeDoneSets(entry.doneSets, getSetCount(entry)).filter(Boolean).length;
+}
+
+function isEntryComplete(entry) {
+  const setCount = getSetCount(entry);
+  if (setCount <= 0) return Boolean(entry.complete);
+
+  return countDoneSets(entry) === setCount;
 }
 
 function applyDoneSets(entry, doneSets) {
@@ -356,10 +393,10 @@ function normalizeExercise(exercise) {
     id: exercise.id || createId("exercise"),
     name: exercise.name || "Untitled Exercise",
     category: exercise.category || "General",
-    sets: coerceNumber(exercise.sets),
-    reps: coerceNumber(exercise.reps),
-    weight: coerceNumber(exercise.weight),
-    time: coerceNumber(exercise.time),
+    sets: parseNumericInput(exercise.sets),
+    reps: parseNumericInput(exercise.reps),
+    weight: parseNumericInput(exercise.weight),
+    time: parseNumericInput(exercise.time),
     notes: exercise.notes || "",
   };
 }
@@ -401,6 +438,11 @@ function createWorkoutFromPlan(plan) {
   };
 }
 
+function pickWorkoutCelebration() {
+  const index = Math.floor(Math.random() * WORKOUT_CELEBRATIONS.length);
+  return WORKOUT_CELEBRATIONS[index];
+}
+
 function summarizeEntries(entries) {
   const totalSets = entries.reduce(
     (sum, entry) => sum + getActualValues(entry).sets,
@@ -433,9 +475,7 @@ function summarizeEntries(entries) {
     completeCount: entries.filter(
       (entry) =>
         entry.complete ||
-        (Array.isArray(entry.doneSets) &&
-          entry.doneSets.length > 0 &&
-          countDoneSets(entry) === entry.doneSets.length),
+        (Array.isArray(entry.doneSets) && entry.doneSets.length > 0 && isEntryComplete(entry)),
     ).length,
   };
 }
@@ -651,9 +691,7 @@ function ExerciseForm({ onCreate }) {
   function updateField(field, value) {
     setDraft((current) => ({
       ...current,
-      [field]: ["sets", "reps", "weight", "time"].includes(field)
-        ? coerceNumber(value)
-        : value,
+      [field]: NUMERIC_EXERCISE_FIELDS.includes(field) ? parseNumericInput(value) : value,
     }));
   }
 
@@ -747,9 +785,7 @@ function PlanExerciseEditor({ exercise, onChange, onDelete }) {
   function updateField(field, value) {
     onChange(exercise.id, {
       ...exercise,
-      [field]: ["sets", "reps", "weight", "time"].includes(field)
-        ? coerceNumber(value)
-        : value,
+      [field]: NUMERIC_EXERCISE_FIELDS.includes(field) ? parseNumericInput(value) : value,
     });
   }
 
@@ -966,7 +1002,7 @@ function WorkoutEntry({ entry, onChange, onRemove }) {
       actual: {
         ...entry.actual,
         sets: doneCount,
-        [field]: coerceNumber(value),
+        [field]: parseNumericInput(value),
       },
     });
   }
@@ -1091,6 +1127,7 @@ function WorkoutEntry({ entry, onChange, onRemove }) {
 }
 
 function ActiveWorkoutPanel({
+  activeEntryId,
   activeWorkout,
   isFocused = false,
   onBack,
@@ -1104,6 +1141,30 @@ function ActiveWorkoutPanel({
   onTitleChange,
 }) {
   const summary = activeWorkout ? summarizeWorkout(activeWorkout) : null;
+  const entryRefs = useRef({});
+  const orderedEntries = useMemo(() => {
+    if (!activeWorkout) return [];
+
+    return activeWorkout.entries
+      .map((entry, index) => ({ entry, index }))
+      .sort((left, right) => {
+        const leftComplete = isEntryComplete(left.entry);
+        const rightComplete = isEntryComplete(right.entry);
+
+        if (leftComplete !== rightComplete) return leftComplete ? 1 : -1;
+        return left.index - right.index;
+      })
+      .map(({ entry }) => entry);
+  }, [activeWorkout]);
+
+  useEffect(() => {
+    if (!isFocused || !activeEntryId) return;
+
+    entryRefs.current[activeEntryId]?.scrollIntoView({
+      block: "center",
+      behavior: "smooth",
+    });
+  }, [activeEntryId, isFocused, orderedEntries]);
 
   return (
     <section className={`panel run-panel ${isFocused ? "workout-focus-panel" : ""}`}>
@@ -1190,13 +1251,24 @@ function ActiveWorkoutPanel({
 
           <div className={`session-list ${isFocused ? "workout-tile-grid" : ""}`}>
             {activeWorkout.entries.length ? (
-              activeWorkout.entries.map((entry) => (
-                <WorkoutEntry
-                  entry={entry}
+              orderedEntries.map((entry) => (
+                <div
+                  className={entry.id === activeEntryId ? "active-workout-card" : undefined}
                   key={entry.id}
-                  onChange={onChangeEntry}
-                  onRemove={onRemoveEntry}
-                />
+                  ref={(node) => {
+                    if (node) {
+                      entryRefs.current[entry.id] = node;
+                    } else {
+                      delete entryRefs.current[entry.id];
+                    }
+                  }}
+                >
+                  <WorkoutEntry
+                    entry={entry}
+                    onChange={onChangeEntry}
+                    onRemove={onRemoveEntry}
+                  />
+                </div>
               ))
             ) : (
               <EmptyState icon={ListPlus} title="This workout has no exercises" />
@@ -1847,6 +1919,8 @@ function WorkoutApp({ user, onLogout }) {
   const [sessionPlans, setSessionPlansState] = useState([]);
   const [selectedPlanId, setSelectedPlanId] = useState(null);
   const [activeWorkout, setActiveWorkoutState] = useState(null);
+  const [activeEntryId, setActiveEntryId] = useState(null);
+  const [workoutCelebration, setWorkoutCelebration] = useState("");
   const [workoutLogs, setWorkoutLogsState] = useState([]);
   const [isDataLoading, setIsDataLoading] = useState(true);
   const [dataError, setDataError] = useState("");
@@ -1864,7 +1938,14 @@ function WorkoutApp({ user, onLogout }) {
           : DEFAULT_SESSION_PLANS;
 
         setSessionPlansState(nextSessionPlans);
-        setActiveWorkoutState(data.activeWorkout || null);
+        const loadedWorkout = data.activeWorkout || null;
+
+        setActiveWorkoutState(loadedWorkout);
+        setActiveEntryId(
+          loadedWorkout?.entries.find((entry) => !isEntryComplete(entry))?.id ||
+            loadedWorkout?.entries[0]?.id ||
+            null,
+        );
         setWorkoutLogsState(Array.isArray(data.workoutLogs) ? data.workoutLogs : []);
         setSelectedPlanId(nextSessionPlans[0]?.id || null);
         setDataError("");
@@ -1880,6 +1961,16 @@ function WorkoutApp({ user, onLogout }) {
       isMounted = false;
     };
   }, [user.username]);
+
+  useEffect(() => {
+    if (!workoutCelebration) return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      setWorkoutCelebration("");
+    }, 5200);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [workoutCelebration]);
 
   function persistField(path, body) {
     apiRequest(path, {
@@ -2023,8 +2114,12 @@ function WorkoutApp({ user, onLogout }) {
   }
 
   function startWorkout(plan) {
+    const nextWorkout = createWorkoutFromPlan(plan);
+
     setSelectedPlanId(plan.id);
-    setActiveWorkout(createWorkoutFromPlan(plan));
+    setActiveEntryId(nextWorkout.entries[0]?.id || null);
+    setActiveWorkout(nextWorkout);
+    setWorkoutCelebration("");
     setViewMode("workout");
   }
 
@@ -2036,34 +2131,67 @@ function WorkoutApp({ user, onLogout }) {
   }
 
   function addExtraExerciseToWorkout() {
+    const extraEntry = planExerciseToEntry({
+      id: createId("exercise-extra"),
+      name: "Extra Exercise",
+      category: "General",
+      sets: 3,
+      reps: 10,
+      weight: 0,
+      time: 0,
+      notes: "",
+    });
+
     updateActiveWorkout((workout) => ({
       ...workout,
-      entries: [
-        ...workout.entries,
-        planExerciseToEntry({
-          id: createId("exercise-extra"),
-          name: "Extra Exercise",
-          category: "General",
-          sets: 3,
-          reps: 10,
-          weight: 0,
-          time: 0,
-          notes: "",
-        }),
-      ],
+      entries: [...workout.entries, extraEntry],
     }));
+    setActiveEntryId(extraEntry.id);
   }
 
   function changeWorkoutEntry(entryId, nextEntry) {
-    updateActiveWorkout((workout) => ({
-      ...workout,
-      entries: workout.entries.map((entry) =>
-        entry.id === entryId ? nextEntry : entry,
-      ),
-    }));
+    if (!activeWorkout) return;
+
+    const previousEntry = activeWorkout.entries.find((entry) => entry.id === entryId);
+    const wasComplete = previousEntry ? isEntryComplete(previousEntry) : false;
+    const wasWorkoutComplete =
+      activeWorkout.entries.length > 0 && activeWorkout.entries.every(isEntryComplete);
+    const nextEntries = activeWorkout.entries.map((entry) =>
+      entry.id === entryId ? nextEntry : entry,
+    );
+    const currentIndex = Math.max(
+      0,
+      activeWorkout.entries.findIndex((entry) => entry.id === entryId),
+    );
+    const isNowComplete = isEntryComplete(nextEntry);
+    const isWorkoutComplete = nextEntries.length > 0 && nextEntries.every(isEntryComplete);
+
+    setActiveWorkout({
+      ...activeWorkout,
+      entries: nextEntries,
+    });
+
+    if (!wasComplete && isNowComplete) {
+      const nextOpenEntry =
+        nextEntries.slice(currentIndex + 1).find((entry) => !isEntryComplete(entry)) ||
+        nextEntries.slice(0, currentIndex + 1).find((entry) => !isEntryComplete(entry));
+      setActiveEntryId(nextOpenEntry?.id || nextEntries[0]?.id || null);
+    } else if (wasComplete && !isNowComplete) {
+      setActiveEntryId(entryId);
+    }
+
+    if (!wasWorkoutComplete && isWorkoutComplete) {
+      setActiveEntryId(nextEntries[0]?.id || null);
+      setWorkoutCelebration(pickWorkoutCelebration());
+    }
   }
 
   function removeWorkoutEntry(entryId) {
+    if (activeEntryId === entryId) {
+      const nextEntry = activeWorkout?.entries.find((entry) => entry.id !== entryId);
+      setActiveEntryId(nextEntry?.id || null);
+    }
+
     updateActiveWorkout((workout) => ({
       ...workout,
       entries: workout.entries.filter((entry) => entry.id !== entryId),
@@ -2074,7 +2202,10 @@ function WorkoutApp({ user, onLogout }) {
     if (!activeWorkout) return;
     const plan = sessionPlans.find((item) => item.id === activeWorkout.planId);
     if (plan) {
-      setActiveWorkout(createWorkoutFromPlan(plan));
+      const nextWorkout = createWorkoutFromPlan(plan);
+      setActiveEntryId(nextWorkout.entries[0]?.id || null);
+      setActiveWorkout(nextWorkout);
+      setWorkoutCelebration("");
     }
   }
 
@@ -2096,6 +2227,7 @@ function WorkoutApp({ user, onLogout }) {
       ...current,
     ]);
     setActiveWorkout(null);
+    setActiveEntryId(null);
     setViewMode("planner");
   }
 
@@ -2202,6 +2334,12 @@ function WorkoutApp({ user, onLogout }) {
       </header>
 
       {dataError && <p className="login-error">{dataError}</p>}
+      {workoutCelebration && (
+        <div className="celebration-toast" role="status">
+          <Check aria-hidden="true" size={20} />
+          <strong>{workoutCelebration}</strong>
+        </div>
+      )}
 
       {isDataLoading ? (
         <section className="panel">
@@ -2216,6 +2354,7 @@ function WorkoutApp({ user, onLogout }) {
       ) : viewMode === "workout" && activeWorkout ? (
         <div className="workout-screen">
           <ActiveWorkoutPanel
+            activeEntryId={activeEntryId}
             activeWorkout={activeWorkout}
             isFocused
             onAddExtra={addExtraExerciseToWorkout}

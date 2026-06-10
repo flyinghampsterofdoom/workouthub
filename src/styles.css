@@ -448,6 +448,15 @@ button:disabled {
   display: grid;
   gap: 6px;
   min-width: 0;
+  border-radius: 8px;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.field:focus-within {
+  background: #f3faf5;
+  box-shadow: 0 0 0 5px rgba(47, 123, 95, 0.08);
 }
 
 .field span,
@@ -484,7 +493,8 @@ textarea {
 input:focus,
 textarea:focus {
   border-color: var(--green);
-  box-shadow: 0 0 0 3px rgba(47, 123, 95, 0.12);
+  background: #fbfffc;
+  box-shadow: 0 0 0 3px rgba(47, 123, 95, 0.18);
 }
 
 input[readonly] {
@@ -743,6 +753,11 @@ input[readonly] {
   overflow: hidden;
 }
 
+.active-workout-card {
+  border-radius: 8px;
+  box-shadow: 0 0 0 4px rgba(47, 123, 95, 0.16);
+}
+
 .workout-focus-panel {
   box-shadow: none;
 }
@@ -809,6 +824,27 @@ input[readonly] {
 .session-entry.is-complete {
   border-left-color: var(--green);
   background: linear-gradient(90deg, rgba(229, 242, 234, 0.8), rgba(255, 255, 255, 0.96) 34%);
+}
+
+.celebration-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 14px 16px;
+  border: 1px solid #b8cbbc;
+  border-radius: 8px;
+  color: var(--green-dark);
+  background: #f4faf6;
+  box-shadow: var(--shadow);
+}
+
+.celebration-toast strong {
+  overflow-wrap: anywhere;
 }
 
 .entry-head {
