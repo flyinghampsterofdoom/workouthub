@@ -362,6 +362,41 @@ function isEntryComplete(entry) {
   return countDoneSets(entry) === setCount;
 }
 
+function getFirstOpenEntryId(entries) {
+  return entries.find((entry) => !isEntryComplete(entry))?.id || entries[0]?.id || null;
+}
+
+function getNextStraightEntryId(entries, currentIndex) {
+  return (
+    entries.slice(currentIndex + 1).find((entry) => !isEntryComplete(entry))?.id ||
+    entries.slice(0, currentIndex + 1).find((entry) => !isEntryComplete(entry))?.id ||
+    entries[0]?.id ||
+    null
+  );
+}
+
+function getNextCircuitEntryId(entries, currentIndex, completedSetIndex) {
+  if (!entries.length) return null;
+
+  const orderedIndexes = [
+    ...entries.slice(currentIndex + 1).map((_, offset) => currentIndex + 1 + offset),
+    ...entries.slice(0, currentIndex + 1).map((_, offset) => offset),
+  ];
+
+  if (Number.isInteger(completedSetIndex)) {
+    const sameRoundIndex = orderedIndexes.find((entryIndex) => {
+      const entry = entries[entryIndex];
+      const doneSets = normalizeDoneSets(entry.doneSets, getSetCount(entry));
+      return completedSetIndex < doneSets.length && !doneSets[completedSetIndex];
+    });
+
+    if (sameRoundIndex !== undefined) return entries[sameRoundIndex].id;
+  }
+
+  const nextOpenIndex = orderedIndexes.find((entryIndex) => !isEntryComplete(entries[entryIndex]));
+  return nextOpenIndex !== undefined ? entries[nextOpenIndex].id : entries[0]?.id || null;
+}
+
 function applyDoneSets(entry, doneSets) {
   const doneCount = doneSets.filter(Boolean).length;
 
@@ -433,6 +468,7 @@ function createWorkoutFromPlan(plan) {
     planId: plan.id,
     planName: plan.name,
     title: `${todayTitle()} - ${plan.name}`,
+    flowMode: "straight",
     startedAt: new Date().toISOString(),
     entries: plan.exercises.map(planExerciseToEntry),
   };
@@ -1015,17 +1051,25 @@ function WorkoutEntry({ entry, onChange, onRemove }) {
   }
 
   function toggleSet(index) {
+    const wasDone = doneSets[index];
     const nextDoneSets = doneSets.map((isDone, currentIndex) =>
       currentIndex === index ? !isDone : isDone,
     );
 
-    onChange(entry.id, applyDoneSets(entry, nextDoneSets));
+    onChange(entry.id, applyDoneSets(entry, nextDoneSets), {
+      completed: !wasDone,
+      setIndex: index,
+      type: "set",
+    });
   }
 
   function toggleAllSets() {
     const shouldComplete = doneCount < setCount;
     const nextDoneSets = doneSets.map(() => shouldComplete);
-    onChange(entry.id, applyDoneSets(entry, nextDoneSets));
+    onChange(entry.id, applyDoneSets(entry, nextDoneSets), {
+      completed: shouldComplete,
+      type: "all",
+    });
   }
 
   return (
@@ -1139,23 +1183,16 @@ function ActiveWorkoutPanel({
   onReset,
   onStartSelected,
   onTitleChange,
+  onWorkoutModeChange,
 }) {
   const summary = activeWorkout ? summarizeWorkout(activeWorkout) : null;
   const entryRefs = useRef({});
   const orderedEntries = useMemo(() => {
     if (!activeWorkout) return [];
 
-    return activeWorkout.entries
-      .map((entry, index) => ({ entry, index }))
-      .sort((left, right) => {
-        const leftComplete = isEntryComplete(left.entry);
-        const rightComplete = isEntryComplete(right.entry);
-
-        if (leftComplete !== rightComplete) return leftComplete ? 1 : -1;
-        return left.index - right.index;
-      })
-      .map(({ entry }) => entry);
+    return activeWorkout.entries;
   }, [activeWorkout]);
+  const flowMode = activeWorkout?.flowMode || "straight";
 
   useEffect(() => {
     if (!isFocused || !activeEntryId) return;
@@ -1164,7 +1201,7 @@ function ActiveWorkoutPanel({
       block: "center",
       behavior: "smooth",
     });
-  }, [activeEntryId, isFocused, orderedEntries]);
+  }, [activeEntryId, isFocused]);
 
   return (
     <section className={`panel run-panel ${isFocused ? "workout-focus-panel" : ""}`}>
@@ -1210,6 +1247,27 @@ function ActiveWorkoutPanel({
                 value={activeWorkout.title}
               />
             </label>
+            <div className="flow-mode-field">
+              <span>Order</span>
+              <div className="segmented-control" role="group" aria-label="Workout order">
+                <button
+                  aria-pressed={flowMode === "straight"}
+                  className={flowMode === "straight" ? "is-selected" : ""}
+                  onClick={() => onWorkoutModeChange("straight")}
+                  type="button"
+                >
+                  Straight
+                </button>
+                <button
+                  aria-pressed={flowMode === "circuit"}
+                  className={flowMode === "circuit" ? "is-selected" : ""}
+                  onClick={() => onWorkoutModeChange("circuit")}
+                  type="button"
+                >
+                  Circuit
+                </button>
+              </div>
+            </div>
             <div className="toolbar-actions">
               <button className="button ghost" onClick={onAddExtra} type="button">
                 <Plus size={18} />
@@ -1942,9 +2000,7 @@ function WorkoutApp({ user, onLogout }) {
 
         setActiveWorkoutState(loadedWorkout);
         setActiveEntryId(
-          loadedWorkout?.entries.find((entry) => !isEntryComplete(entry))?.id ||
-            loadedWorkout?.entries[0]?.id ||
-            null,
+          loadedWorkout ? getFirstOpenEntryId(loadedWorkout.entries || []) : null,
         );
         setWorkoutLogsState(Array.isArray(data.workoutLogs) ? data.workoutLogs : []);
         setSelectedPlanId(nextSessionPlans[0]?.id || null);
@@ -2146,10 +2202,9 @@ function WorkoutApp({ user, onLogout }) {
       ...workout,
       entries: [...workout.entries, extraEntry],
     }));
-    setActiveEntryId(extraEntry.id);
   }
 
-  function changeWorkoutEntry(entryId, nextEntry) {
+  function changeWorkoutEntry(entryId, nextEntry, changeMeta = {}) {
     if (!activeWorkout) return;
 
     const previousEntry = activeWorkout.entries.find((entry) => entry.id === entryId);
@@ -2171,13 +2226,21 @@ function WorkoutApp({ user, onLogout }) {
       entries: nextEntries,
     });
 
-    if (!wasComplete && isNowComplete) {
-      const nextOpenEntry =
-        nextEntries.slice(currentIndex + 1).find((entry) => !isEntryComplete(entry)) ||
-        nextEntries.slice(0, currentIndex + 1).find((entry) => !isEntryComplete(entry));
-      setActiveEntryId(nextOpenEntry?.id || nextEntries[0]?.id || null);
-    } else if (wasComplete && !isNowComplete) {
+    if (wasComplete && !isNowComplete) {
       setActiveEntryId(entryId);
+    } else if (changeMeta.completed) {
+      const flowMode = activeWorkout.flowMode || "straight";
+      const shouldAdvance =
+        flowMode === "circuit" || (!wasComplete && isNowComplete);
+
+      if (shouldAdvance) {
+        const nextEntryId =
+          flowMode === "circuit"
+            ? getNextCircuitEntryId(nextEntries, currentIndex, changeMeta.setIndex)
+            : getNextStraightEntryId(nextEntries, currentIndex);
+
+        setActiveEntryId(nextEntryId);
+      }
     }
 
     if (!wasWorkoutComplete && isWorkoutComplete) {
@@ -2207,6 +2270,15 @@ function WorkoutApp({ user, onLogout }) {
       setActiveWorkout(nextWorkout);
       setWorkoutCelebration("");
     }
+  }
+
+  function changeWorkoutMode(flowMode) {
+    if (!["straight", "circuit"].includes(flowMode)) return;
+
+    updateActiveWorkout((workout) => ({
+      ...workout,
+      flowMode,
+    }));
   }
 
   function finishWorkout() {
@@ -2369,6 +2441,7 @@ function WorkoutApp({ user, onLogout }) {
                 title,
               }))
             }
+            onWorkoutModeChange={changeWorkoutMode}
             selectedPlan={selectedPlan}
           />
         </div>

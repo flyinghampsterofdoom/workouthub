@@ -671,9 +671,9 @@ input[readonly] {
 
 .session-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 0.42fr) minmax(300px, 0.72fr);
   gap: 12px;
-  align-items: stretch;
+  align-items: end;
   padding: 16px 18px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-muted);
@@ -691,6 +691,43 @@ input[readonly] {
 .session-title {
   display: grid;
   gap: 6px;
+}
+
+.flow-mode-field {
+  display: grid;
+  gap: 6px;
+}
+
+.flow-mode-field > span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: 40px;
+  padding: 3px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.segmented-control button {
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-weight: 900;
+}
+
+.segmented-control button.is-selected {
+  color: #ffffff;
+  background: var(--green);
 }
 
 .session-title input {
@@ -763,7 +800,7 @@ input[readonly] {
 }
 
 .workout-focus-panel .session-toolbar {
-  grid-template-columns: minmax(260px, 1fr) minmax(360px, 0.6fr);
+  grid-template-columns: minmax(260px, 1fr) minmax(190px, 0.42fr) minmax(360px, 0.6fr);
   align-items: end;
 }
 
@@ -1232,6 +1269,7 @@ input[readonly] {
     grid-template-columns: 1fr;
   }
 
+  .session-toolbar,
   .workout-focus-panel .session-toolbar {
     grid-template-columns: 1fr;
   }
