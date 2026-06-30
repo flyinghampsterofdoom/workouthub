@@ -426,7 +426,7 @@ function getActualValues(entry) {
 function normalizeExercise(exercise) {
   return {
     id: exercise.id || createId("exercise"),
-    name: exercise.name || "Untitled Exercise",
+    name: exercise.name ?? "Untitled Exercise",
     category: exercise.category || "General",
     sets: parseNumericInput(exercise.sets),
     reps: parseNumericInput(exercise.reps),
@@ -528,6 +528,7 @@ function Field({
   label,
   value,
   onChange,
+  onBlur,
   type = "text",
   min,
   step,
@@ -539,6 +540,7 @@ function Field({
       <span>{label}</span>
       <input
         min={min}
+        onBlur={onBlur}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         readOnly={readOnly}
@@ -804,6 +806,7 @@ function ExerciseForm({ onCreate }) {
 }
 
 function PlanExerciseEditor({ exercise, onChange, onDelete }) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const {
     attributes,
     listeners,
@@ -825,15 +828,21 @@ function PlanExerciseEditor({ exercise, onChange, onDelete }) {
     });
   }
 
+  function finishEditingName() {
+    if (!exercise.name.trim()) {
+      updateField("name", "Untitled Exercise");
+    }
+  }
+
   return (
     <article
       className={`exercise-editor sortable-card ${isDragging ? "is-dragging" : ""}`}
       ref={setNodeRef}
       style={style}
     >
-      <div className="entry-head exercise-card-head">
+      <div className="exercise-summary-row">
         <button
-          aria-label={`Move ${exercise.name}`}
+          aria-label={`Move ${exercise.name || "unnamed exercise"}`}
           className="drag-handle"
           type="button"
           {...attributes}
@@ -841,64 +850,83 @@ function PlanExerciseEditor({ exercise, onChange, onDelete }) {
         >
           <GripVertical aria-hidden="true" size={19} />
         </button>
-        <div className="exercise-title-fields">
-          <Field
-            label="Exercise"
-            onChange={(value) => updateField("name", value)}
-            value={exercise.name}
+        <button
+          aria-expanded={isExpanded}
+          className="exercise-summary-toggle"
+          onClick={() => setIsExpanded((current) => !current)}
+          type="button"
+        >
+          <strong>{exercise.name || "Unnamed exercise"}</strong>
+          <ChevronDown
+            aria-hidden="true"
+            className={isExpanded ? "rotate" : ""}
+            size={18}
           />
-          <Field
-            label="Category"
-            onChange={(value) => updateField("category", value)}
-            value={exercise.category}
-          />
-        </div>
+        </button>
         <IconButton
           className="danger"
-          label={`Remove ${exercise.name}`}
+          label={`Remove ${exercise.name || "unnamed exercise"}`}
           onClick={() => onDelete(exercise.id)}
         >
           <Trash2 size={18} />
         </IconButton>
       </div>
 
-      <div className="mini-grid">
-        <Field
-          label="Sets"
-          min="0"
-          onChange={(value) => updateField("sets", value)}
-          type="number"
-          value={exercise.sets}
-        />
-        <Field
-          label="Reps"
-          min="0"
-          onChange={(value) => updateField("reps", value)}
-          type="number"
-          value={exercise.reps}
-        />
-        <Field
-          label="Weight"
-          min="0"
-          onChange={(value) => updateField("weight", value)}
-          step="0.5"
-          type="number"
-          value={exercise.weight}
-        />
-        <Field
-          label="Time"
-          min="0"
-          onChange={(value) => updateField("time", value)}
-          type="number"
-          value={exercise.time}
-        />
-      </div>
+      {isExpanded && (
+        <div className="exercise-editor-details">
+          <div className="exercise-title-fields">
+            <Field
+              label="Exercise"
+              onBlur={finishEditingName}
+              onChange={(value) => updateField("name", value)}
+              value={exercise.name}
+            />
+            <Field
+              label="Category"
+              onChange={(value) => updateField("category", value)}
+              value={exercise.category}
+            />
+          </div>
 
-      <TextAreaField
-        label="Exercise notes"
-        onChange={(value) => updateField("notes", value)}
-        value={exercise.notes}
-      />
+          <div className="mini-grid">
+            <Field
+              label="Sets"
+              min="0"
+              onChange={(value) => updateField("sets", value)}
+              type="number"
+              value={exercise.sets}
+            />
+            <Field
+              label="Reps"
+              min="0"
+              onChange={(value) => updateField("reps", value)}
+              type="number"
+              value={exercise.reps}
+            />
+            <Field
+              label="Weight"
+              min="0"
+              onChange={(value) => updateField("weight", value)}
+              step="0.5"
+              type="number"
+              value={exercise.weight}
+            />
+            <Field
+              label="Time"
+              min="0"
+              onChange={(value) => updateField("time", value)}
+              type="number"
+              value={exercise.time}
+            />
+          </div>
+
+          <TextAreaField
+            label="Exercise notes"
+            onChange={(value) => updateField("notes", value)}
+            value={exercise.notes}
+          />
+        </div>
+      )}
     </article>
   );
 }
